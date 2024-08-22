@@ -981,7 +981,7 @@ def main(
                                     width        = width,
                                     **validation_data,
                                 ).videos
-                                save_videos_grid(sample, f"{output_dir}/samples/sample-{global_step}/{idx}.gif")
+                                # save_videos_grid(sample, f"{output_dir}/samples/sample-{global_step}/{idx}.gif")
                                 samples.append(sample)
                                 
                             else:
