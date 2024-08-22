@@ -999,7 +999,7 @@ def main(
 
                 if not image_finetune:
                     samples = torch.concat(samples)
-                    save_path = f"{output_dir}/samples/sample-{global_step}.gif"
+                    save_path = f"{output_dir}/samples/sample-{global_step}.mp4"
                     save_videos_grid(samples, save_path)
                     
                 else:
