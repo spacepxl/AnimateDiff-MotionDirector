@@ -25,26 +25,21 @@ At the moment, there are no plans for SDXL as it's still in early stages, but is
 ### Setup repository and conda environment
 
 ```
-git clone https://github.com/ExponentialML/AnimateDiff-MotionDirector
+git clone https://github.com/spacepxl/AnimateDiff-MotionDirector
 cd AnimateDiff-MotionDirector
 
-conda env create -f environment.yaml
-conda activate animatediff-motiondirector
+python -m venv .venv
+.venv\Scripts\activate
+
+pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu118
 
 pip install -r requirements.txt
 ```
 
-### Download Stable Diffusion V1.5
+### Download Stable Diffusion V1.5 and AnimateDiff models (5.6 GB)
 
 ```
-git lfs install
-git clone https://huggingface.co/runwayml/stable-diffusion-v1-5 models/StableDiffusion/
-```
-
-### Download V3 Motion Module
-```
-git lfs install
-https://huggingface.co/guoyww/animatediff/blob/main/v3_sd15_mm.ckpt
+download_models.bat
 ```
 
 ## Training Instuctions
