@@ -6,6 +6,8 @@ samples/
 __pycache__/
 ossutil_output/
 .ossutil_checkpoint/
+venv/
+.venv/
 
 scripts/*
 !scripts/animate.py
@@ -24,3 +26,13 @@ models/StableDiffusion/*
 !models/DreamBooth_LoRA/*.txt
 !models/MotionLoRA/
 !models/MotionLoRA/*.txt
+
+configs/training/motion_director/
+!configs/training/motion_director/my_video.yaml
+!configs/training/motion_director/training.yaml
+configs/training/v1
+!configs/training/v1/image_finetune.yaml
+!configs/training/v1/training.yaml
+
+examples/
+!examples/pexels-cottonbro-5319934 (2160p).mp4
