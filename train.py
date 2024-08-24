@@ -17,7 +17,8 @@ import torch
 import torchvision
 import torch.nn.functional as F
 
-os.environ["XFORMERS_FORCE_DISABLE_TRITON"] = "1"
+if os.name == 'nt': # triton is not available on windows
+    os.environ["XFORMERS_FORCE_DISABLE_TRITON"] = "1"
 import diffusers
 from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler
 from diffusers.models import UNet2DConditionModel
@@ -726,6 +727,21 @@ def main(
     global_step = 0
     first_epoch = 0
 
+    # Data batch sanity check
+    print("Dataset sanity check:")
+    for _idx, _batch in enumerate(train_dataloader):
+        if _idx < 4: # limit the number of sanity check samples
+            do_sanity_check(
+                _batch, 
+                cache_latents, 
+                validation_pipeline, 
+                device, 
+                output_dir=output_dir, 
+                dataset_id=_idx
+        )
+        else:
+            break
+
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
 
@@ -765,22 +781,7 @@ def main(
                 batch['text_prompt'] = [
                     f"{augment_text} {prompt}" for prompt in batch['text_prompt']
                 ]
-                
-            # Data batch sanity check
-            if epoch == first_epoch and step == 0:
-                print("Dataset sanity check...")
-                for _idx, _batch in enumerate(train_dataloader):
-                    do_sanity_check(
-                        _batch, 
-                        cache_latents, 
-                        validation_pipeline, 
-                        device, 
-                        output_dir=output_dir, 
-                        dataset_id=_idx
-                    )
-                    if _idx > 2: # limit the number of sanity check samples
-                        break
-
+            
             # Convert videos to latent space            
             pixel_values = batch["pixel_values"].to(device)
             video_length = pixel_values.shape[2]
