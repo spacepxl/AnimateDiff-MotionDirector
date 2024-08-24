@@ -47,6 +47,15 @@ This batch script clones the original sd15 repository without large files, then 
 download_models.bat
 ```
 
+## Video Processing
+
+PySceneDetect is included for splitting video files by shot/cut
+
+```
+cd examples\subfolder
+scenedetect -i example-video.mp4 split-video
+```
+
 ## Training Instuctions
 
 Open `./configs/training/motion_director/my_video.yaml`.

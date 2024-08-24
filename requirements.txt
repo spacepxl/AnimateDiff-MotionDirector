@@ -14,3 +14,4 @@ wandb
 lion-pytorch
 accelerate
 tensorboard
+scenedetect[opencv]
