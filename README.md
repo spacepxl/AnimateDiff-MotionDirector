@@ -2,8 +2,7 @@
 
 *Training video*           |  *Output video*
 :-------------------------:|:-------------------------:
-![myimage](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/b4e2c1d5-d33b-47dc-b106-9836737d3bd2) | ![myimage](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/b61b7919-2c9b-4556-aff9-4c15bb60ebf3)  | 
-![bat_run](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/bd40ce25-9892-49f9-9fd4-785e492c04b5) *Output video* | ![rabbit_run](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/f24d05bb-67fa-48d4-a103-610e8de2ffe6) 
+![myimage](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/b4e2c1d5-d33b-47dc-b106-9836737d3bd2) | ![myimage](https://github.com/ExponentialML/AnimateDiff-MotionDirector/assets/59846140/b61b7919-2c9b-4556-aff9-4c15bb60ebf3) 
 
 
 *a highly realistic video of batman running in a mystic forest, depth of field, epic lights, high quality, trending on artstation*
@@ -22,14 +21,18 @@ If you wish to add it back, you can do so by referencing the original code.
 Only `v3` modules have been tested for [Stable Diffusion V1.5](https://huggingface.co/runwayml/stable-diffusion-v1-5). 
 At the moment, there are no plans for SDXL as it's still in early stages, but is very well possible. PRs welcomed! 
 
-### Setup repository and conda environment
+## Setup Instructions
+
+Setup instructions for this fork are made with windows and venv in mind, although linux and/or conda should still work. If you're installing on linux you'll probably want to add triton to the requirements (not available on windows).
+
+### Set up environment
 
 ```
 git clone https://github.com/spacepxl/AnimateDiff-MotionDirector
 cd AnimateDiff-MotionDirector
 
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scripts\activate.bat
 
 pip install torch torchvision xformers --index-url https://download.pytorch.org/whl/cu118
 
@@ -37,6 +40,8 @@ pip install -r requirements.txt
 ```
 
 ### Download Stable Diffusion V1.5 and AnimateDiff models (5.6 GB)
+
+This batch script clones the original sd15 repository without large files, then manually downloads only the necessary files to avoid version bloat. Also includes AD v3 motion module and adapter.
 
 ```
 download_models.bat
@@ -52,7 +57,7 @@ To setup training, open the `my_video.yaml` in a text editor. There, every line 
 
 To run, simply execute the following code.
 
-`python train.py --config ./configs/training/motion_director/my_video.yaml`
+`python train.py --tensorboard --config ./configs/training/motion_director/my_video.yaml`
 
 By default, results will be saved in `outputs`. 
 
