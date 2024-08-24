@@ -17,6 +17,7 @@ import torch
 import torchvision
 import torch.nn.functional as F
 
+os.environ["XFORMERS_FORCE_DISABLE_TRITON"] = "1"
 import diffusers
 from diffusers import AutoencoderKL, DDIMScheduler, DDPMScheduler
 from diffusers.models import UNet2DConditionModel
@@ -727,7 +728,7 @@ def main(
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
-    progress_bar.set_description("Steps")
+    # progress_bar.set_description("Steps")
 
     # Support mixed-precision training
     scaler = torch.cuda.amp.GradScaler() if mixed_precision_training else None
@@ -777,7 +778,7 @@ def main(
                         output_dir=output_dir, 
                         dataset_id=_idx
                     )
-                    if _idx > 10:
+                    if _idx > 3: # limit the number of sanity check samples
                         break
 
             # Convert videos to latent space            
@@ -971,7 +972,7 @@ def main(
                         for idx, prompt in enumerate(prompts):
                             if len(prompt) == 0:
                                 prompt = batch['text_prompt']
-                            print(prompt)
+                            print(f"Sampling: {prompt}")
                             if not image_finetune:
                                 sample = validation_pipeline(
                                     prompt,
@@ -1015,7 +1016,10 @@ def main(
                 "Spatial Loss": loss_spatial.detach().item() if loss_spatial is not None else 0,
                 "Spatial LR": spatial_scheduler_lr
             }
-            progress_bar.set_postfix(**logs)
+            progress_message = {"t loss": loss_temporal.detach().item(),}
+            if loss_spatial is not None:
+                progress_message["s loss"] = loss_spatial.detach().item()
+            progress_bar.set_postfix(**progress_message)
             
             if gradient_checkpointing:
                 unet.enable_gradient_checkpointing()
