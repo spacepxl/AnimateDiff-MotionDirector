@@ -13,3 +13,4 @@ gradio
 wandb
 lion-pytorch
 accelerate
+tensorboard

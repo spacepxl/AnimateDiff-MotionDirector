@@ -6,6 +6,7 @@ import logging
 import inspect
 import argparse
 import datetime
+import subprocess
 
 from pathlib import Path
 from tqdm.auto import tqdm
@@ -16,6 +17,7 @@ from typing import Dict, Tuple
 import torch
 import torchvision
 import torch.nn.functional as F
+from torch.utils.tensorboard import SummaryWriter
 
 if os.name == 'nt': # triton is not available on windows
     os.environ["XFORMERS_FORCE_DISABLE_TRITON"] = "1"
@@ -76,6 +78,7 @@ def create_save_paths(output_dir: str):
         output_dir,
         f"{output_dir}/samples",
         f"{output_dir}/sanity_check",
+        f"{output_dir}/log",
         lora_path
     ]
 
@@ -404,6 +407,7 @@ def main(
     
     name: str,
     use_wandb: bool,
+    use_tensorboard: bool,
 
     output_dir: str,
     pretrained_model_path: str,
@@ -504,12 +508,21 @@ def main(
         level=logging.INFO,
     )
 
-    if not is_debug and use_wandb:
-        run = wandb.init(project="animatediff", name=folder_name, config=config)
-
     # Handle the output folder creation
     lora_path = create_save_paths(output_dir)
     OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
+
+    if not is_debug and use_wandb:
+        run = wandb.init(project="animatediff", name=folder_name, config=config)
+
+    if use_tensorboard:
+        log_dir = os.path.join(output_dir, 'log')
+        t_writer = SummaryWriter(log_dir=log_dir, flush_secs=60)
+        
+        env = os.environ.copy()
+        DETACHED_PROCESS = 0x00000008
+        tensorboard_command = ["tensorboard", "--logdir", log_dir]
+        subprocess.Popen(tensorboard_command, close_fds=True, env=env, creationflags=DETACHED_PROCESS)
 
     # Load scheduler, tokenizer and models.
     noise_scheduler_kwargs.update({"steps_offset": 1})
@@ -897,6 +910,19 @@ def main(
             progress_bar.update(1)
             global_step += 1
             
+            logs = {
+                "Temporal Loss": loss_temporal.detach().item(),
+                "Temporal LR": temporal_scheduler_lr, 
+                "Spatial Loss": loss_spatial.detach().item() if loss_spatial is not None else 0,
+                "Spatial LR": spatial_scheduler_lr
+            }
+            progress_message = {"t_loss": loss_temporal.detach().item(),}
+            if loss_spatial is not None:
+                progress_message["s_loss"] = loss_spatial.detach().item()
+            else:
+                progress_message["s_loss"] = "N/A"
+            progress_bar.set_postfix(**progress_message)
+            
             # Wandb logging
             if not is_debug and use_wandb:
                 loss = (
@@ -904,7 +930,14 @@ def main(
                         loss_temporal + loss_spatial
                 )
                 wandb.log({"train_loss": loss.item()}, step=global_step)
-                
+            
+            if use_tensorboard:
+                t_writer.add_scalar("loss/temporal", loss_temporal.detach().item(), global_step)
+                if loss_spatial is not None:
+                    t_writer.add_scalar("loss/spatial", loss_spatial.detach().item(), global_step)
+                t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
+                t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
+            
             # Save checkpoint
             if global_step % checkpointing_steps == 0:
                 import copy
@@ -1001,26 +1034,17 @@ def main(
 
                 if not image_finetune:
                     samples = torch.concat(samples)
-                    save_path = f"{output_dir}/samples/sample-{global_step}.mp4"
+                    save_path = f"{output_dir}/samples/sample-{global_step:08}.mp4"
                     save_videos_grid(samples, save_path)
                     
                 else:
                     samples = torch.stack(samples)
-                    save_path = f"{output_dir}/samples/sample-{global_step}.png"
+                    save_path = f"{output_dir}/samples/sample-{global_step:08}.png"
                     torchvision.utils.save_image(samples, save_path, nrow=4)
 
                 logging.info(f"Saved samples to {save_path}")
             
-            logs = {
-                "Temporal Loss": loss_temporal.detach().item(),
-                "Temporal LR": temporal_scheduler_lr, 
-                "Spatial Loss": loss_spatial.detach().item() if loss_spatial is not None else 0,
-                "Spatial LR": spatial_scheduler_lr
-            }
-            progress_message = {"t loss": loss_temporal.detach().item(),}
-            if loss_spatial is not None:
-                progress_message["s loss"] = loss_spatial.detach().item()
-            progress_bar.set_postfix(**progress_message)
+            
             
             if gradient_checkpointing:
                 unet.enable_gradient_checkpointing()
@@ -1032,6 +1056,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config",   type=str, required=True)
     parser.add_argument("--wandb",    action="store_true")
+    parser.add_argument("--tensorboard", action="store_true")
     args = parser.parse_args()
 
     name   = Path(args.config).stem
@@ -1040,4 +1065,4 @@ if __name__ == "__main__":
     if getattr(config, "simple_mode", False):
         config = get_simple_config(config)
     
-    main(name=name, use_wandb=args.wandb, **config)
+    main(name=name, use_wandb=args.wandb, use_tensorboard=args.tensorboard, **config)
