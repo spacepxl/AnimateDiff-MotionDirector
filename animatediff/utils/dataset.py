@@ -636,7 +636,7 @@ class CachedDataset(DatasetProcessor, Dataset):
         return len(self.cached_data_list)
 
     def __getitem__(self, index):
-        cached_latent = torch.load(self.cached_data_list[index], map_location='cpu')
+        cached_latent = torch.load(self.cached_data_list[index], map_location='cpu', weights_only=True)
 
         return cached_latent
 

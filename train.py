@@ -728,10 +728,9 @@ def main(
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
-    # progress_bar.set_description("Steps")
 
     # Support mixed-precision training
-    scaler = torch.cuda.amp.GradScaler() if mixed_precision_training else None
+    scaler = torch.amp.GradScaler('cuda') if mixed_precision_training else None
     
     ### <<<< Training <<<< ###
     for epoch in range(first_epoch, num_train_epochs):
@@ -769,7 +768,8 @@ def main(
                 
             # Data batch sanity check
             if epoch == first_epoch and step == 0:
-                for _idx, _batch in enumerate(tqdm(train_dataloader, desc="Dataset sanity check...")):
+                print("Dataset sanity check...")
+                for _idx, _batch in enumerate(train_dataloader):
                     do_sanity_check(
                         _batch, 
                         cache_latents, 
@@ -778,7 +778,7 @@ def main(
                         output_dir=output_dir, 
                         dataset_id=_idx
                     )
-                    if _idx > 3: # limit the number of sanity check samples
+                    if _idx > 2: # limit the number of sanity check samples
                         break
 
             # Convert videos to latent space            
@@ -808,7 +808,7 @@ def main(
                 
                 encoder_hidden_states = text_encoder(prompt_ids)[0]
 
-            with torch.cuda.amp.autocast(enabled=mixed_precision_training):
+            with torch.amp.autocast('cuda', enabled=mixed_precision_training):
                 if mask_spatial_lora:
                     loras = extract_lora_child_module(unet, target_replace_module=target_spatial_modules)
                     scale_loras(loras, 0.)
@@ -957,7 +957,7 @@ def main(
                         else validation_data.prompts
                 )
                 
-                with torch.cuda.amp.autocast(enabled=True):
+                with torch.amp.autocast('cuda', enabled=True):
                     if gradient_checkpointing:
                         unet.disable_gradient_checkpointing()
 
