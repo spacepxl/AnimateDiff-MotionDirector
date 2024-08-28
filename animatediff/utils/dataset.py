@@ -11,7 +11,7 @@ from glob import glob
 from PIL import Image
 from itertools import islice
 from pathlib import Path
-from .bucketing import sensible_buckets
+from .bucketing import sensible_buckets, equal_area_bucket
 
 decord.bridge.set_bridge('torch')
 
@@ -122,7 +122,7 @@ class DatasetProcessor(object):
 
     def get_frame_buckets(self, vr):
         h, w, c = vr[0].shape        
-        width, height = sensible_buckets(
+        width, height = equal_area_bucket(
             self.width, 
             self.height, 
             w, 
@@ -458,7 +458,102 @@ class SingleVideoDataset(DatasetProcessor, Dataset):
     def __getitem__(self, index):
         video, prompt, prompt_ids = self.single_video_batch(index)
         return self._example(video, prompt_ids, prompt)
+
+
+class SingleFrameSequenceDataset(DatasetProcessor, Dataset):
+    def __init__(
+        self,
+            tokenizer = None,
+            width: int = 256,
+            height: int = 256,
+            n_sample_frames: int = 4,
+            fps: int = 0,
+            frame_step: int = 1,
+            single_video_path: str = "",
+            single_video_prompt: str = "",
+            use_caption: bool = False,
+            use_bucketing: bool = False,
+            condition_processor = None,
+            max_chunks: int = 0,
+            sample_start_idx: int = 0,
+            **kwargs
+    ):
+        DatasetProcessor.__init__(self, condition_processor, kwargs.get('cond_processor_kwargs', {}))
+        self.tokenizer = tokenizer
+        self.use_bucketing = use_bucketing
+        self.frames = []
+        self.index = 1
+        self.vid_types = (".png", ".jpg")
+        self.n_sample_frames = n_sample_frames
+        self.fps = fps
+        self.frame_step = frame_step
+        self.max_chunks = max_chunks
+        self.sample_start_idx = sample_start_idx
+
+        self.single_video_path = single_video_path
+        self.single_video_prompt = single_video_prompt
+        self.frames = self.create_video_chunks(
+            single_video_path, 
+            fps, 
+            frame_step, 
+            n_sample_frames, 
+            max_chunks,
+            sample_start_idx
+        )
+
+        self.width = width
+        self.height = height
+
+    def get_frame_batch(self, vr, resize=None):
+        index = self.index
+
+        frames = vr.get_batch(self.frames[self.index])
+        video = rearrange(frames, "f h w c -> f c h w")
+
+        if resize is not None: 
+            video = resize(video)
+        return video
+
+    def get_prompt(self):
+        vid_ext = self.single_video_path.split(".")[-1]
+        video_path = self.single_video_path
+
+        maybe_text_file = video_path.replace(f".{vid_ext}", ".txt")
+        
+        if os.path.exists(maybe_text_file):
+            with open(maybe_text_file, "r") as f:
+                prompt = f.read()
+        else:
+            prompt = self.single_video_prompt
+
+        return prompt
+
+    def single_video_batch(self, index):
+        train_data = self.single_video_path
+        self.index = index
+
+        if train_data.endswith(self.vid_types):
+            video, _ = self.process_video_wrapper(train_data)
+
+            prompt = self.get_prompt()
+            prompt_ids = get_prompt_ids(prompt, self.tokenizer)
+
+            return video, prompt, prompt_ids
+        else:
+            raise ValueError(f"Single video is not a video type. Types: {self.vid_types}")
     
+    @staticmethod
+    def __getname__(): 
+        return 'single_video'
+
+    def __len__(self):
+        return len(self.frames)
+
+    def __getitem__(self, index):
+        video, prompt, prompt_ids = self.single_video_batch(index)
+        return self._example(video, prompt_ids, prompt)
+ 
+
 class ImageDataset(DatasetProcessor, Dataset):
     
     def __init__(
@@ -516,7 +611,7 @@ class ImageDataset(DatasetProcessor, Dataset):
 
         if self.use_bucketing:
             _, h, w = img.shape
-            width, height = sensible_buckets(width, height, w, h, extra_simple=False)
+            width, height = equal_area_bucket(width, height, w, h, extra_simple=False)
               
         resize = T.transforms.Resize((height, width), antialias=True)
 

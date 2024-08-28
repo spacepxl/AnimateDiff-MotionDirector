@@ -1,20 +1,22 @@
 # Model From Huggingface Diffusers
-pretrained_model_path: "diffusers/stable-diffusion-v1-5"
+# pretrained_model_path: "diffusers/stable-diffusion-v1-5"
+pretrained_model_path: "models/StableDiffusion"
 
 # Model in CKPT format. This is the CKPT that you download from CivitAI or use in A111 Comfy, etc.
 # In most cases, leave this blank.
 unet_checkpoint_path: ""
 
 # Must be CKPT from https://huggingface.co/guoyww/animatediff/tree/main
-motion_module_path: "v3_sd15_mm.ckpt"
+motion_module_path: "models/Motion_Module/v3_sd15_mm.ckpt"
 
 # Must be CKPT from https://huggingface.co/guoyww/animatediff/tree/main
 # Optional for training, but highly recommended as a starting point. 
-domain_adapter_path: "" #"v3_sd15_adapter.ckpt"
+domain_adapter_path: "models/Motion_Module/v3_sd15_adapter.ckpt"
 
-# ["single_video", "folder"]
+# ["single_video", "folder", "frames"]
 # single_video = path/my_video.mp4
 # folder = path/my_videos
+# frames = path/folders/frames####.png
 
 # You can have .txt file with prompt in the same folder. 
 # Eg. path/my_videos/1.mp4 path/my_videos/1.txt
@@ -45,7 +47,7 @@ save_name: "man_running"
 # Quality
 # Quality of training: ["low", "preferred", "best"]
 # low = Save the most memory, preferred = Most optimal, best = Memory intensive
-quality: "preferred"
+quality: "best"
 
 # Advanced users only. Only modify this if you're familiar with traning models.
 # You can call / modify this config directly if you know what you're doing.

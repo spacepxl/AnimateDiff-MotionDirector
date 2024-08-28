@@ -44,3 +44,17 @@ def sensible_buckets(m_width, m_height, w, h, min_size=192, extra_simple=False):
             return m_width, h
 
     return m_width, m_height
+
+def equal_area_bucket(m_width, m_height, w, h, min_size=192, extra_simple=False):
+    total_res = m_width * m_height
+    aspect_ratio = w / h
+    
+    new_width  = round(((total_res * aspect_ratio) ** 0.5) / 64) * 64
+    new_height = round(((total_res / aspect_ratio) ** 0.5) / 64) * 64
+    
+    if new_width < min_size:
+        new_width = min_size
+    if new_height < min_size:
+        new_height = min_size
+    
+    return new_width, new_height

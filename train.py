@@ -37,7 +37,7 @@ from animatediff.pipelines.pipeline_animation import AnimationPipeline
 from animatediff.utils.util import save_videos_grid, load_diffusers_lora, load_weights
 from animatediff.utils.lora_handler import LoraHandler
 from animatediff.utils.lora import extract_lora_child_module
-from animatediff.utils.dataset import VideoJsonDataset, SingleVideoDataset, \
+from animatediff.utils.dataset import VideoJsonDataset, SingleVideoDataset, SingleFrameSequenceDataset, \
     ImageDataset, VideoFolderDataset, CachedDataset, VID_TYPES
 from animatediff.utils.configs import get_simple_config
 from lion_pytorch import Lion
@@ -90,12 +90,14 @@ def create_save_paths(output_dir: str):
 def get_train_dataset(dataset_types, train_data, tokenizer):
     def process_folder_of_videos(train_datasets: list, video_folder: str):
          for video_file in os.listdir(video_folder):
-
             is_video = any([video_file.split(".")[-1] in ext for ext in VID_TYPES])
-
             if is_video:
                 train_data["single_video_path"] = f"{video_folder}/{video_file}"
                 train_datasets.append(SingleVideoDataset(**train_data, tokenizer=tokenizer))
+            # else:
+                # print("frame sequence")
+                # train_data["single_video_path"] = f"{video_folder}/{video_file}"
+                # train_datasets.append(SingleFrameSequenceDataset(**train_data, tokenizer=tokenizer))
 
     train_datasets = []
 
@@ -104,13 +106,10 @@ def get_train_dataset(dataset_types, train_data, tokenizer):
         for dataset in dataset_types:
             if dataset == DataSet.__getname__():
                 video_folder = train_data.get("path", "")
-
-                if os.path.exists(video_folder) and dataset == "folder":
-                            process_folder_of_videos(
-                                train_datasets, 
-                                video_folder
-                            )
-                            continue
+                if os.path.exists(video_folder):
+                    if dataset == "folder":
+                        process_folder_of_videos(train_datasets, video_folder)
+                        continue
                 train_datasets.append(DataSet(**train_data, tokenizer=tokenizer))
 
     if len(train_datasets) > 0:

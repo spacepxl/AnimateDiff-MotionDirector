@@ -27,7 +27,7 @@ def create_quality_config(
     return SimpleNamespace(**config)
 
 def set_train_data(config: SimpleNamespace, quality_config: SimpleNamespace):
-        train_data_map = ["sample_size", "width", "height", "sample_size", "use_bucketing"]
+        train_data_map = ["sample_size", "width", "height", "use_bucketing"]
         
         # Set LoRA Rank fallback
         setattr(config, 'lora_rank', getattr(quality_config, 'lora_rank', 8))
@@ -62,6 +62,28 @@ def set_single_video_args(config: SimpleNamespace, simple_config: SimpleNamespac
 
 def set_folder_of_videos_args(config: SimpleNamespace, simple_config: SimpleNamespace):
     config.dataset_types = ["folder"]
+
+    folder_data_map = [
+        ("max_chunks", "max_chunks"),
+        ("path", "path"),
+        ("single_video_prompt", "training_prompt"),
+        ("fallback_prompt", "training_prompt"),
+        ("prompts", "validation_prompt")
+    ]
+
+    for folder_data_key, simple_config_key in folder_data_map:
+        if simple_config_key == "max_chunks":
+            setattr(
+                config.train_data, 
+                folder_data_key, 
+                getattr(simple_config.video, simple_config_key, sys.maxsize)
+            )
+            continue
+
+        setattr(config.train_data, folder_data_key, getattr(simple_config.video, simple_config_key))
+
+def set_folder_of_frames_args(config: SimpleNamespace, simple_config: SimpleNamespace):
+    config.dataset_types = ["frames"]
 
     folder_data_map = [
         ("max_chunks", "max_chunks"),
@@ -123,6 +145,8 @@ def get_simple_config(config: OmegaConf):
         set_single_video_args(config, simple_config)
     elif simple_config.mode_type == "folder":
         set_folder_of_videos_args(config, simple_config)
+    elif simple_config.mode_type == "frames":
+        set_folder_of_frames_args(config, simple_config)
     else: 
         raise ValueError(f"{simple_config.mode_type} not imlemented. Choose 'single_video' or 'folder'")
 
