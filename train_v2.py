@@ -88,32 +88,6 @@ def create_save_paths(output_dir: str):
 
     return lora_path
 
-# def get_train_dataset(dataset_types, train_data, tokenizer):
-    # def process_folder_of_videos(train_datasets: list, video_folder: str):
-         # for video_file in os.listdir(video_folder):
-            # is_video = any([video_file.split(".")[-1] in ext for ext in VID_TYPES])
-            # if is_video:
-                # train_data["single_video_path"] = f"{video_folder}/{video_file}"
-                # train_datasets.append(SingleVideoDataset(**train_data, tokenizer=tokenizer))
-
-    # train_datasets = []
-
-    # Loop through all available datasets, get the name, then add to list of data to process.
-    # for DataSet in [VideoJsonDataset, SingleVideoDataset, ImageDataset, VideoFolderDataset]:
-        # for dataset in dataset_types:
-            # if dataset == DataSet.__getname__():
-                # video_folder = train_data.get("path", "")
-                # if os.path.exists(video_folder):
-                    # if dataset == "folder":
-                        # process_folder_of_videos(train_datasets, video_folder)
-                        # continue
-                # train_datasets.append(DataSet(**train_data, tokenizer=tokenizer))
-
-    # if len(train_datasets) > 0:
-        # return train_datasets
-    # else:
-        # raise ValueError("Dataset type not found: 'json', 'single_video', 'folder', 'image'")
-
 def get_train_dataset(train_data, vae=None, tokenizer=None, text_encoder=None):
     dataset_path = train_data.get("path", "")
     default_caption = train_data.get("training_prompt", "")
@@ -138,156 +112,6 @@ def collate_batch(batch):
         videos.append(video[offset:offset+16]) # TODO: change to using train_data.n_sample_frames somehow (in dataset getitem?)
         captions.append(caption)
     return torch.stack(videos), torch.stack(captions)
-
-def tensor_to_vae_latent(t, vae):
-    video_length = t.shape[1]
-
-    t = rearrange(t, "b f c h w -> (b f) c h w")
-    latents = vae.encode(t).latent_dist.sample()
-    latents = rearrange(latents, "(b f) c h w -> b c f h w", f=video_length)
-    latents = latents * 0.18215
-
-    return latents
-
-def get_cached_latent_dir(c_dir):
-    from omegaconf import ListConfig
-
-    if isinstance(c_dir, str):
-        return os.path.abspath(c_dir) if c_dir is not None else None
-    
-    if isinstance(c_dir, ListConfig):
-        c_dir = OmegaConf.to_object(c_dir)
-        return c_dir
-
-    return None
-
-def handle_cache_latents(
-        should_cache, 
-        output_dir, 
-        train_dataloader, 
-        train_batch_size, 
-        vae, 
-        cached_latent_dir=None,
-        shuffle=False,
-        minimum_required_frames=16,
-        sampler=None,
-        device='cuda'
-    ):
-
-    # Cache latents by storing them in VRAM. 
-    # Speeds up training and saves memory by not encoding during the train loop.
-    if not should_cache: 
-        return None
-    
-    vae_dtype = vae.dtype
-    vae.to(device, dtype=torch.float32)
-
-    if hasattr(vae, 'enable_slicing'):
-        vae.enable_slicing()
-    
-    cached_latent_dir = get_cached_latent_dir(cached_latent_dir)
-
-    if cached_latent_dir is None:
-        cache_save_dir = f"{output_dir}/cached_latents"
-        os.makedirs(cache_save_dir, exist_ok=True)
-    
-        for i, batch in enumerate(tqdm(train_dataloader, desc="Caching Latents.")):
-
-            frames = batch['pixel_values'].shape[1]
-
-            not_min_frames = frames > 2 and frames < minimum_required_frames
-            not_img_train = (frames == 1 and batch['dataset'] != 'image')
-
-            if any([not_min_frames, not_img_train]) and minimum_required_frames != 0:
-                print(f"""
-                    Batch item at index {i} does not meet required minimum frames.
-                    Seeing this error means that some of your video lengths are too short, but training will continue.
-                    Minimum Frames: {minimum_required_frames}
-                    Batch item frames: Batch index = {i}, Batch Frames = {frames}
-                    """
-                )
-                continue
-
-            save_name = f"cached_{i}"
-            full_out_path =  f"{cache_save_dir}/{save_name}.pt"
-
-        
-            pixel_values = batch['pixel_values'].to(device, dtype=torch.float32)
-            batch['pixel_values'] = tensor_to_vae_latent(pixel_values, vae)
-            
-            for k, v in batch.items(): 
-                batch[k] = v[0]
-
-            torch.save(batch, full_out_path)
-            
-            del pixel_values
-            del batch
-
-            # We do this to avoid fragmentation from casting latents between devices.
-            torch.cuda.empty_cache()
-    else:
-        cache_save_dir = cached_latent_dir
-        
-    # Convert string to list of strings for processing if we have more than.
-    cache_save_dir = (
-                [cache_save_dir] if not isinstance(cache_save_dir, list) 
-            else 
-                cache_save_dir
-        )
-
-    cached_dataset_list = []
-
-    for save_dir in cache_save_dir:
-        cached_dataset = CachedDataset(cache_dir=save_dir)
-        cached_dataset_list.append(cached_dataset)
-
-    if len(cached_dataset_list) > 1:
-        print(f"Found {len(cached_dataset_list)} cached datasets. Merging...")
-        new_cached_dataset = torch.utils.data.ConcatDataset(cached_dataset_list)
-    else:
-        new_cached_dataset = cached_dataset_list[0] 
-
-    vae.to(dtype=vae_dtype)
-
-    return torch.utils.data.DataLoader(
-                new_cached_dataset,
-                batch_size=train_batch_size, 
-                shuffle=shuffle,
-                num_workers=2,
-                persistent_workers=True,
-                pin_memory=False,
-                sampler=sampler
-            )
-
-def do_sanity_check(
-    batch: Dict, 
-    cache_latents: bool, 
-    validation_pipeline: AnimationPipeline, 
-    device: str, 
-    image_finetune: bool=False,
-    output_dir: str = "",
-    dataset_id: int = 0
-):
-    pixel_values, texts = batch['pixel_values'].cpu(), batch["text_prompt"]
-    
-    if cache_latents:
-        pixel_values = validation_pipeline.decode_latents(batch["pixel_values"].to(device))
-        to_torch = torch.from_numpy(pixel_values)
-        pixel_values = rearrange(to_torch, 'b c f h w -> b f c h w')
-        
-    if not image_finetune:
-        pixel_values = rearrange(pixel_values, "b f c h w -> b c f h w")
-        for idx, (pixel_value, text) in enumerate(zip(pixel_values, texts)):
-            pixel_value = pixel_value[None, ...]
-            text = f"{str(dataset_id)}_{text}"
-            save_name = f"{'-'.join(text.replace('/', '').split()[:10]) if not text == '' else f'-{idx}'}.mp4"
-            save_videos_grid(pixel_value, f"{output_dir}/sanity_check/{save_name}", rescale=not cache_latents)
-    else:
-        for idx, (pixel_value, text) in enumerate(zip(pixel_values, texts)):
-            pixel_value = pixel_value / 2. + 0.5
-            text = f"{str(dataset_id)}_{text}"
-            save_name = f"{'-'.join(text.replace('/', '').split()[:10]) if not text == '' else f'-{idx}'}.png"
-            torchvision.utils.save_image(pixel_value, f"{output_dir}/sanity_check/{save_name}")
 
 def sample_noise(latents, noise_strength, use_offset_noise=False):
     b, c, f, *_ = latents.shape
@@ -489,9 +313,6 @@ def main(
 ):
     check_min_version("0.10.0.dev0")
     
-    # if use_text_augmenter:
-        # print("Using random text augmentation")
-
     # Initialize distributed training
     num_processes   = 1        
     seed = global_seed
@@ -735,21 +556,6 @@ def main(
     logging.info(f"  Total optimization steps = {max_train_steps}")
     global_step = 0
     first_epoch = 0
-
-    # Data batch sanity check
-    # print("Dataset sanity check:")
-    # for _idx, _batch in enumerate(train_dataloader):
-        # if _idx < 4: # limit the number of sanity check samples
-            # do_sanity_check(
-                # _batch, 
-                # cache_latents, 
-                # validation_pipeline, 
-                # device, 
-                # output_dir=output_dir, 
-                # dataset_id=_idx
-        # )
-        # else:
-            # break
 
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(range(global_step, max_train_steps))
