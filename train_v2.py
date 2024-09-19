@@ -116,7 +116,7 @@ def create_save_paths(output_dir: str):
 
 def get_train_dataset(train_data, vae=None, tokenizer=None, text_encoder=None):
     dataset_path = train_data.get("path", "")
-    default_caption = train_data.get("fallback_prompt", "")
+    default_caption = train_data.get("training_prompt", "")
     base_res = train_data.get("width", 512)
     crop = False
     
@@ -134,7 +134,8 @@ def collate_batch(batch):
     videos = []
     captions = []
     for (video, caption) in batch:
-        videos.append(video[0:16])
+        offset = random.randint(0, video.size(0) - 18)
+        videos.append(video[offset:offset+16]) # TODO: change to using train_data.n_sample_frames somehow (in dataset getitem?)
         captions.append(caption)
     return torch.stack(videos), torch.stack(captions)
 
@@ -368,31 +369,21 @@ def scale_loras(lora_list: list, scale: float, step=None, spatial_lora_num=None)
             lora_i.scale = scale
 
 def get_spatial_latents(
-        batch: Dict, 
-        random_hflip_img: int, 
-        cache_latents: bool,
-        noisy_latents:torch.Tensor, 
+        latents: torch.Tensor,
+        random_hflip_img: int,
+        noisy_latents:torch.Tensor,
         target: torch.Tensor,
         timesteps: torch.Tensor,
         noise_scheduler: DDPMScheduler
     ):
-    ran_idx = torch.randint(0, batch["pixel_values"].shape[2], (1,)).item()
+    ran_idx = torch.randint(0, latents.shape[2], (1,)).item()
     use_hflip = random.uniform(0, 1) < random_hflip_img
 
     noisy_latents_input = None
     target_spatial = None
 
     if use_hflip:
-        pixel_values_spatial = torchvision.transforms.functional.hflip(
-            batch["pixel_values"][:, ran_idx, :, :, :] if not cache_latents else\
-                batch["pixel_values"][:, :, ran_idx, :, :]
-        ).unsqueeze(1)
-
-        latents_spatial = (
-            tensor_to_vae_latent(pixel_values_spatial, vae) if not cache_latents
-            else
-            pixel_values_spatial
-        )
+        latents_spatial = torchvision.transforms.functional.hflip(latents[:, :, ran_idx, :, :]).unsqueeze(1)
 
         noise_spatial = sample_noise(latents_spatial, 0,  use_offset_noise=use_offset_noise)
         noisy_latents_input = noise_scheduler.add_noise(latents_spatial, noise_spatial, timesteps)
@@ -498,8 +489,8 @@ def main(
 ):
     check_min_version("0.10.0.dev0")
     
-    if use_text_augmenter:
-        print("Using random text augmentation")
+    # if use_text_augmenter:
+        # print("Using random text augmentation")
 
     # Initialize distributed training
     num_processes   = 1        
@@ -775,9 +766,13 @@ def main(
             temporal_scheduler_lr = 0.0
             
             vid, cap = batch
-            print(f"{vid.shape = }")
-            print(f"{cap.shape = }")
-
+            latents = rearrange(vid, "b f c h w -> b c f h w").to(device)
+            video_length = latents.shape[2]
+            bsz = latents.shape[0]
+            
+            print(f"{latents.shape = }") # torch.Size([2, 16, 4, 56, 72])
+            print(f"{cap.shape = }") # torch.Size([2, 1, 77, 768])
+            
             # Handle Lora Optimizers & Conditions
             for optimizer_spatial in optimizer_spatial_list:
                 optimizer_spatial.zero_grad(set_to_none=True)
@@ -792,44 +787,17 @@ def main(
 
             mask_spatial_lora =  random.uniform(0, 1) < 0.2 and not mask_temporal_lora
 
-            if cfg_random_null_text:
-                batch["text_prompt"] = [name if random.random() > cfg_random_null_text_ratio else "" for name in batch["text_prompt"]]
-            
-            if use_text_augmenter:
-                random.seed()
-                txt_idx = random.randint(0, len(augment_text_list) - 1)
-                augment_text = augment_text_list[txt_idx]
-                
-                batch['text_prompt'] = [
-                    f"{augment_text} {prompt}" for prompt in batch['text_prompt']
-                ]
-            
-            # Convert videos to latent space            
-            pixel_values = batch["pixel_values"].to(device)
-            video_length = pixel_values.shape[2]
-            bsz = pixel_values.shape[0]       
-
             # Sample a random timestep for each video
-            timesteps = torch.randint(0, train_noise_scheduler.config.num_train_timesteps, (bsz,), device=pixel_values.device)
+            timesteps = torch.randint(0, train_noise_scheduler.config.num_train_timesteps, (bsz,), device=device)
             timesteps = timesteps.long()
 
             # Add noise to the latents according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            latents = tensor_to_vae_latent(pixel_values, vae) if not cache_latents else pixel_values
             noise = sample_noise(latents, 0, use_offset_noise=use_offset_noise)
-            target = noise         
+            target = noise
 
             # Get the text embedding for conditioning
-            with torch.no_grad():
-                prompt_ids = tokenizer(
-                    batch['text_prompt'], 
-                    max_length=tokenizer.model_max_length, 
-                    padding="max_length", 
-                    truncation=True, 
-                    return_tensors="pt"
-                ).input_ids.to(pixel_values.device)
-                
-                encoder_hidden_states = text_encoder(prompt_ids)[0]
+            encoder_hidden_states = cap.to(device)
 
             with torch.amp.autocast('cuda', enabled=mixed_precision_training):
                 if mask_spatial_lora:
@@ -851,9 +819,8 @@ def main(
                     ### >>>> Spatial LoRA Prediction >>>> ###
                     noisy_latents = train_noise_scheduler_spatial.add_noise(latents, noise, timesteps)
                     noisy_latents_input, target_spatial, use_hflip = get_spatial_latents(
-                        batch, 
-                        random_hflip_img, 
-                        cache_latents,
+                        latents,
+                        random_hflip_img,
                         noisy_latents,
                         target,
                         timesteps,
@@ -915,7 +882,7 @@ def main(
                     lr_scheduler_temporal.step()
                     temporal_scheduler_lr = lr_scheduler_temporal.get_lr()[0]
             
-            scaler.update()  
+            scaler.update()
             progress_bar.update(1)
             global_step += 1
             
@@ -984,16 +951,13 @@ def main(
                 generator = torch.Generator(device=latents.device)
                 generator.manual_seed(global_seed if validation_seed == -1 else validation_seed)
                 
-                if not train_sample_validation:
-                    if not isinstance(train_data.sample_size, int):
-                        height, width = train_data.sample_size[:2]
-                    else:
-                        height, width = [train_data.sample_size] * 2
+                
+                if isinstance(train_data.sample_size, int):
+                    height, width = [train_data.sample_size] * 2
+                elif train_data.sample_size is not None:
+                    height, width = train_data.sample_size[:2]
                 else:
-                    if all(['resized_h'in batch, 'resized_w' in batch]):
-                        height, width = batch["resized_h"], batch['resized_w'] 
-                    else:
-                        height, width = [512] * 2
+                    height, width = [512] * 2
 
                 prompts = (
                     validation_data.prompts[:2] if global_step < 1000 and (not image_finetune) \
@@ -1014,8 +978,8 @@ def main(
                         unet.eval()
                         for idx, prompt in enumerate(prompts):
                             if len(prompt) == 0:
-                                prompt = batch['text_prompt']
-                            print(f"Sampling: {prompt}")
+                                prompt = train_data.get("training_prompt", "")
+                            logging.info(f"Sampling: {prompt}")
                             if not image_finetune:
                                 sample = validation_pipeline(
                                     prompt,
@@ -1025,7 +989,6 @@ def main(
                                     width        = width,
                                     **validation_data,
                                 ).videos
-                                # save_videos_grid(sample, f"{output_dir}/samples/sample-{global_step}/{idx}.gif")
                                 samples.append(sample)
                                 
                             else:
