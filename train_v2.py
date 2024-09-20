@@ -332,18 +332,22 @@ def main(
         os.system(f"rm -rf {output_dir}")
 
     *_, config = inspect.getargvalues(inspect.currentframe())
-
+    
+    # Handle the output folder creation
+    lora_path = create_save_paths(output_dir)
+    OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
+    
     # Make one log on every process with the configuration for debugging.
+    logfile = os.path.join(output_dir, folder_name + ".log")
     logging.basicConfig(
+        filename=logfile,
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
-
-    # Handle the output folder creation
-    lora_path = create_save_paths(output_dir)
-    OmegaConf.save(config, os.path.join(output_dir, 'config.yaml'))
-
+    
+    logging.getLogger('').addHandler(logging.StreamHandler())
+    
     if not is_debug and use_wandb:
         run = wandb.init(project="animatediff", name=folder_name, config=config)
 
