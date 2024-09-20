@@ -110,7 +110,7 @@ def collate_batch(batch):
     for (video, caption) in batch:
         offset = random.randint(0, video.size(0) - 18)
         videos.append(video[offset:offset+16]) # TODO: change to using train_data.n_sample_frames somehow (in dataset getitem?)
-        captions.append(caption)
+        captions.append(caption[0])
     return torch.stack(videos), torch.stack(captions)
 
 def sample_noise(latents, noise_strength, use_offset_noise=False):
@@ -576,9 +576,6 @@ def main(
             video_length = latents.shape[2]
             bsz = latents.shape[0]
             
-            print(f"{latents.shape = }") # torch.Size([2, 16, 4, 56, 72])
-            print(f"{cap.shape = }") # torch.Size([2, 1, 77, 768])
-            
             # Handle Lora Optimizers & Conditions
             for optimizer_spatial in optimizer_spatial_list:
                 optimizer_spatial.zero_grad(set_to_none=True)
@@ -757,7 +754,6 @@ def main(
                 generator = torch.Generator(device=latents.device)
                 generator.manual_seed(global_seed if validation_seed == -1 else validation_seed)
                 
-                
                 if isinstance(train_data.sample_size, int):
                     height, width = [train_data.sample_size] * 2
                 elif train_data.sample_size is not None:
@@ -820,7 +816,7 @@ def main(
                     save_path = f"{output_dir}/samples/sample-{global_step:08}.png"
                     torchvision.utils.save_image(samples, save_path, nrow=4)
 
-                logging.info(f"Saved samples to {save_path}")
+                logging.info(f"\nSaved samples to {save_path}")
             
             
             
