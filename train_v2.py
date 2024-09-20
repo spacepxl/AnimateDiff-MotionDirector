@@ -222,7 +222,8 @@ def get_spatial_latents(
 def create_ad_temporal_loss(
         model_pred: torch.Tensor, 
         loss_temporal: torch.Tensor, 
-        target: torch.Tensor
+        target: torch.Tensor,
+        temporal_snr: torch.Tensor
     ):
     beta = 1
     alpha = (beta ** 2 + 1) ** 0.5
@@ -232,7 +233,7 @@ def create_ad_temporal_loss(
     model_pred_decent = alpha * model_pred - beta * model_pred[:, :, ran_idx, :, :].unsqueeze(2)
     target_decent = alpha * target - beta * target[:, :, ran_idx, :, :].unsqueeze(2)
 
-    loss_ad_temporal = F.mse_loss(model_pred_decent.float(), target_decent.float(), reduction="mean")
+    loss_ad_temporal = F.mse_loss(model_pred_decent.float() * temporal_snr, target_decent.float() * temporal_snr, reduction="mean")
     loss_temporal = loss_temporal + loss_ad_temporal
 
     return loss_temporal
@@ -634,16 +635,17 @@ def main(
                         train_noise_scheduler_spatial
                     )
 
+                    spatial_snr = timesteps[:, None, None, None] * 0.004 # multiplier to debias loss by timestep
                     if use_hflip:
                         model_pred_spatial = unet(noisy_latents_input, timesteps,
                                                 encoder_hidden_states=encoder_hidden_states).sample
-                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float(),
-                                                target_spatial[:, :, 0, :, :].float(), reduction="mean")
+                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() * spatial_snr,
+                                                target_spatial[:, :, 0, :, :].float() * spatial_snr, reduction="mean")
                     else:
                         model_pred_spatial = unet(noisy_latents_input.unsqueeze(2), timesteps,
                                                 encoder_hidden_states=encoder_hidden_states).sample
-                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float(),
-                                                target_spatial.float(), reduction="mean")
+                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() * spatial_snr,
+                                                target_spatial.float() * spatial_snr, reduction="mean")
 
                 if mask_temporal_lora:
                     loras = extract_lora_child_module(unet, target_replace_module=target_temporal_modules)
@@ -658,8 +660,9 @@ def main(
                     noisy_latents = train_noise_scheduler.add_noise(latents, noise, timesteps)
                     model_pred = unet(noisy_latents, timesteps, encoder_hidden_states=encoder_hidden_states).sample
                     
-                    loss_temporal = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
-                    loss_temporal = create_ad_temporal_loss(model_pred, loss_temporal, target)
+                    temporal_snr = timesteps[:, None, None, None, None] * 0.004 # multiplier to debias loss by timestep
+                    loss_temporal = F.mse_loss(model_pred.float() * temporal_snr, target.float() * temporal_snr, reduction="mean")
+                    loss_temporal = create_ad_temporal_loss(model_pred, loss_temporal, target, temporal_snr)
 
                 # Backpropagate
                 if not mask_spatial_lora:
@@ -715,8 +718,8 @@ def main(
                 t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
                 t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
                 if bsz == 1:
-                    t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
-                    t_writer.add_scalar("timestep/noise", 1.0 / timesteps.detach().item(), global_step)
+                    # t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
+                    t_writer.add_scalar("timestep/noise", timesteps.detach().item() * -0.001 + 1, global_step)
             
             # Save checkpoint
             if global_step % checkpointing_steps == 0:
