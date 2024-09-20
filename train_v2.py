@@ -693,12 +693,6 @@ def main(
             progress_bar.update(1)
             global_step += 1
             
-            logs = {
-                "Temporal Loss": loss_temporal.detach().item(),
-                "Temporal LR": temporal_scheduler_lr, 
-                "Spatial Loss": loss_spatial.detach().item() if loss_spatial is not None else 0,
-                "Spatial LR": spatial_scheduler_lr
-            }
             progress_message = {"t_loss": loss_temporal.detach().item(),}
             if loss_spatial is not None:
                 progress_message["s_loss"] = loss_spatial.detach().item()
@@ -720,6 +714,9 @@ def main(
                     t_writer.add_scalar("loss/spatial", loss_spatial.detach().item(), global_step)
                 t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
                 t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
+                if bsz == 1:
+                    t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
+                    t_writer.add_scalar("timestep/noise", 1.0 / timesteps.detach().item(), global_step)
             
             # Save checkpoint
             if global_step % checkpointing_steps == 0:
