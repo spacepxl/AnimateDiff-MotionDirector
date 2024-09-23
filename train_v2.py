@@ -91,8 +91,10 @@ def create_save_paths(output_dir: str):
 def get_train_dataset(train_data, vae=None, tokenizer=None, text_encoder=None):
     dataset_path = train_data.get("path", "")
     default_caption = train_data.get("training_prompt", "")
-    base_res = train_data.get("width", 512)
+    base_res = train_data.get("base_res", 512)
     crop = False
+    
+    print(f"building dataset at {base_res = }")
     
     return VideoFrameDataset(
         dataset_path,
@@ -233,7 +235,8 @@ def create_ad_temporal_loss(
     model_pred_decent = alpha * model_pred - beta * model_pred[:, :, ran_idx, :, :].unsqueeze(2)
     target_decent = alpha * target - beta * target[:, :, ran_idx, :, :].unsqueeze(2)
 
-    loss_ad_temporal = F.mse_loss(model_pred_decent.float() * temporal_snr, target_decent.float() * temporal_snr, reduction="mean")
+    loss_ad_temporal = F.mse_loss(model_pred_decent.float(), target_decent.float(), reduction="mean")
+    # loss_ad_temporal = F.mse_loss(model_pred_decent.float() * temporal_snr, target_decent.float() * temporal_snr, reduction="mean")
     loss_temporal = loss_temporal + loss_ad_temporal
 
     return loss_temporal
@@ -569,9 +572,8 @@ def main(
     scaler = torch.amp.GradScaler('cuda') if mixed_precision_training else None
     
     ### <<<< Training <<<< ###
+    unet.train()
     for epoch in range(first_epoch, num_train_epochs):
-        unet.train()
-        
         for step, batch in enumerate(train_dataloader):
             spatial_scheduler_lr = 0.0
             temporal_scheduler_lr = 0.0
@@ -718,7 +720,7 @@ def main(
                 t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
                 t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
                 if bsz == 1:
-                    # t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
+                    t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
                     t_writer.add_scalar("timestep/noise", timesteps.detach().item() * -0.001 + 1, global_step)
             
             # Save checkpoint
@@ -758,12 +760,14 @@ def main(
                 generator = torch.Generator(device=latents.device)
                 generator.manual_seed(global_seed if validation_seed == -1 else validation_seed)
                 
-                if isinstance(train_data.sample_size, int):
-                    height, width = [train_data.sample_size] * 2
-                elif train_data.sample_size is not None:
-                    height, width = train_data.sample_size[:2]
+                if train_data.manual_sample_size is True:
+                    if isinstance(train_data.sample_size, int):
+                        height, width = [train_data.sample_size] * 2
+                    else:
+                        height, width = train_data.sample_size[:2]
                 else:
-                    height, width = [512] * 2
+                    height = int(latents.shape[3]) * 8
+                    width  = int(latents.shape[4]) * 8
 
                 prompts = (
                     validation_data.prompts[:2] if global_step < 1000 and (not image_finetune) \
@@ -785,7 +789,8 @@ def main(
                         for idx, prompt in enumerate(prompts):
                             if len(prompt) == 0:
                                 prompt = train_data.get("training_prompt", "")
-                            logging.info(f"Sampling: {prompt}")
+                            logging.info(f"\nsampling with prompt: {prompt}")
+                            logging.info(f"height: {height}, width: {width}, frames: {train_data.sample_n_frames}")
                             if not image_finetune:
                                 sample = validation_pipeline(
                                     prompt,
