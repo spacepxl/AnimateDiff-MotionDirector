@@ -236,10 +236,30 @@ def create_ad_temporal_loss(
     target_decent = alpha * target - beta * target[:, :, ran_idx, :, :].unsqueeze(2)
 
     loss_ad_temporal = F.mse_loss(model_pred_decent.float(), target_decent.float(), reduction="mean")
-    # loss_ad_temporal = F.mse_loss(model_pred_decent.float() * temporal_snr, target_decent.float() * temporal_snr, reduction="mean")
     loss_temporal = loss_temporal + loss_ad_temporal
 
     return loss_temporal
+
+def compute_snr(noise_scheduler, timesteps):
+    # https://github.com/huggingface/diffusers/blob/main/src/diffusers/training_utils.py#L53
+    
+    alphas_cumprod = noise_scheduler.alphas_cumprod
+    sqrt_alphas_cumprod = alphas_cumprod**0.5
+    sqrt_one_minus_alphas_cumprod = (1.0 - alphas_cumprod) ** 0.5
+
+    sqrt_alphas_cumprod = sqrt_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+    while len(sqrt_alphas_cumprod.shape) < len(timesteps.shape):
+        sqrt_alphas_cumprod = sqrt_alphas_cumprod[..., None]
+    alpha = sqrt_alphas_cumprod.expand(timesteps.shape)
+
+    sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod.to(device=timesteps.device)[timesteps].float()
+    while len(sqrt_one_minus_alphas_cumprod.shape) < len(timesteps.shape):
+        sqrt_one_minus_alphas_cumprod = sqrt_one_minus_alphas_cumprod[..., None]
+    sigma = sqrt_one_minus_alphas_cumprod.expand(timesteps.shape)
+
+    snr = (alpha / sigma) ** 2
+    return snr
+
 
 def main(
     image_finetune: bool,
@@ -637,17 +657,19 @@ def main(
                         train_noise_scheduler_spatial
                     )
 
-                    spatial_snr = timesteps[:, None, None, None] * 0.004 # multiplier to debias loss by timestep
+                    # spatial_snr = timesteps[:, None, None, None] * 0.004 # multiplier to debias loss by timestep
+                    spatial_snr = compute_snr(train_noise_scheduler_spatial, timesteps)
+                    spatial_snr = torch.maximum(spatial_snr, torch.ones_like(spatial_snr) * 0.5) # / spatial_snr
                     if use_hflip:
                         model_pred_spatial = unet(noisy_latents_input, timesteps,
                                                 encoder_hidden_states=encoder_hidden_states).sample
-                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() * spatial_snr,
-                                                target_spatial[:, :, 0, :, :].float() * spatial_snr, reduction="mean")
+                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() / spatial_snr,
+                                                target_spatial[:, :, 0, :, :].float() / spatial_snr, reduction="mean")
                     else:
                         model_pred_spatial = unet(noisy_latents_input.unsqueeze(2), timesteps,
                                                 encoder_hidden_states=encoder_hidden_states).sample
-                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() * spatial_snr,
-                                                target_spatial.float() * spatial_snr, reduction="mean")
+                        loss_spatial = F.mse_loss(model_pred_spatial[:, :, 0, :, :].float() / spatial_snr,
+                                                target_spatial.float() / spatial_snr, reduction="mean")
 
                 if mask_temporal_lora:
                     loras = extract_lora_child_module(unet, target_replace_module=target_temporal_modules)
@@ -662,8 +684,10 @@ def main(
                     noisy_latents = train_noise_scheduler.add_noise(latents, noise, timesteps)
                     model_pred = unet(noisy_latents, timesteps, encoder_hidden_states=encoder_hidden_states).sample
                     
-                    temporal_snr = timesteps[:, None, None, None, None] * 0.004 # multiplier to debias loss by timestep
-                    loss_temporal = F.mse_loss(model_pred.float() * temporal_snr, target.float() * temporal_snr, reduction="mean")
+                    # temporal_snr = timesteps[:, None, None, None, None] * 0.004 # multiplier to debias loss by timestep
+                    temporal_snr = compute_snr(train_noise_scheduler, timesteps)
+                    temporal_snr = torch.maximum(temporal_snr, torch.ones_like(temporal_snr) * 0.5) # / temporal_snr
+                    loss_temporal = F.mse_loss(model_pred.float() / temporal_snr, target.float() / temporal_snr, reduction="mean")
                     loss_temporal = create_ad_temporal_loss(model_pred, loss_temporal, target, temporal_snr)
 
                 # Backpropagate
@@ -717,11 +741,14 @@ def main(
                 t_writer.add_scalar("loss/temporal", loss_temporal.detach().item(), global_step)
                 if loss_spatial is not None:
                     t_writer.add_scalar("loss/spatial", loss_spatial.detach().item(), global_step)
-                t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
-                t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
-                if bsz == 1:
-                    t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
-                    t_writer.add_scalar("timestep/noise", timesteps.detach().item() * -0.001 + 1, global_step)
+                if lr_scheduler != "constant":
+                    t_writer.add_scalar("lr/temporal", temporal_scheduler_lr, global_step)
+                    t_writer.add_scalar("lr/spatial", spatial_scheduler_lr, global_step)
+                # if bsz == 1:
+                    # t_writer.add_scalar("timestep/timestep", timesteps.detach().item(), global_step)
+                    # t_writer.add_scalar("timestep/noise", timesteps.detach().item() * -0.001 + 1, global_step)
+                    # t_writer.add_scalar("timestep/spatial_snr", spatial_snr.detach().item(), global_step)
+                    # t_writer.add_scalar("timestep/temporal_snr", temporal_snr.detach().item(), global_step)
             
             # Save checkpoint
             if global_step % checkpointing_steps == 0:
