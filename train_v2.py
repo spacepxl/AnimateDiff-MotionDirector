@@ -623,7 +623,7 @@ def main(
 
             # Add noise to the latents according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noise = sample_noise(latents, 0, use_offset_noise=use_offset_noise)
+            noise = sample_noise(latents, 0.1, use_offset_noise=use_offset_noise)
             target = noise
 
             # Get the text embedding for conditioning
